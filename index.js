@@ -1,0 +1,75 @@
+const express = require("express");
+const { twiml: Twiml } = require("twilio");
+
+const app = express();
+app.use(express.urlencoded({ extended: false }));
+
+const calls = new Map();
+const MENU = [
+  { id: 1, name: "Tacos" },
+  { id: 2, name: "Burger" },
+  { id: 3, name: "Boisson" }
+];
+
+function getCall(id) {
+  if (!calls.has(id)) calls.set(id, { items: [], name: null });
+  return calls.get(id);
+}
+
+app.post("/voice", (req, res) => {
+  const vr = new Twiml.VoiceResponse();
+  const g = vr.gather({
+    input: "dtmf speech",
+    numDigits: 1,
+    action: "/pick",
+    method: "POST",
+    speechTimeout: "auto",
+    language: "fr-FR"
+  });
+  g.say({ language: "fr-FR" }, "Bienvenue au restaurant. Pour Tacos tapez 1, pour Burger 2, pour Boisson 3.");
+  vr.redirect("/voice");
+  res.type("text/xml").send(vr.toString());
+});
+
+app.post("/pick", (req, res) => {
+  const vr = new Twiml.VoiceResponse();
+  const call = getCall(req.body.CallSid);
+  const d = (req.body.Digits || "").trim();
+  const s = (req.body.SpeechResult || "").toLowerCase();
+  let item = null;
+
+  if (d === "1") item = MENU[0];
+  else if (d === "2") item = MENU[1];
+  else if (d === "3") item = MENU[2];
+  else if (s.includes("taco")) item = MENU[0];
+  else if (s.includes("burger")) item = MENU[1];
+  else if (s.includes("boisson") || s.includes("boire")) item = MENU[2];
+
+  if (!item) {
+    vr.say("Je n'ai pas compris.");
+    vr.redirect("/voice");
+    return res.type("text/xml").send(vr.toString());
+  }
+
+  call.items.push({ name: item.name, qty: 1 });
+  const g = vr.gather({ input: "speech", action: "/name", method: "POST", language: "fr-FR" });
+  g.say({ language: "fr-FR" }, "À quel nom dois-je préparer la commande ?");
+  vr.redirect("/name");
+  res.type("text/xml").send(vr.toString());
+});
+
+app.post("/name", (req, res) => {
+  const vr = new Twiml.VoiceResponse();
+  const call = getCall(req.body.CallSid);
+  call.name = req.body.SpeechResult || "inconnu";
+
+  const recap = call.items.map(i => i.qty + " " + i.name).join(", ");
+  vr.say({ language: "fr-FR" }, `Je récapitule : ${recap} au nom de ${call.name}. Merci, commande confirmée !`);
+  vr.hangup();
+
+  console.log("Commande reçue :", { from: req.body.From, name: call.name, items: call.items });
+  res.type("text/xml").send(vr.toString());
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Bot vocal prêt sur le port " + PORT));
